@@ -13,3 +13,11 @@ poetry run python -m src.MIND.main
 cd jaist-recsys-thema
 poetry run python -m src.RPCD.main
 ```
+
+# kagayaki
+```shell
+qsub -I -q GPU-1A
+setenv PATH ${PATH}:${HOME}/.poetry/bin
+poetry run pyenv exec jupyter lab
+
+```
