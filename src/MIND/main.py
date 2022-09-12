@@ -2,10 +2,10 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 import datetime
+import atexit
 from tqdm import tqdm
-import sys
 
-from ..utils.model.retrieval_model import RetrievalModel
+from src.utils.model.retrieval_model import RetrievalModel
 
 batch_size = 200
 embedding_dimension = 512
@@ -13,7 +13,7 @@ learning_rate = 0.1
 early_stopping_flg = True
 tensorboard_flg = False
 log_path = "./logs/MIND/"
-max_epoch_num = 20
+max_epoch_num = 1
 
 
 def make_click_df(behaviors_df):
@@ -79,6 +79,7 @@ def main():
     print(len(set(train_click_df["item_id"].unique())))
 
     strategy = tf.distribute.MirroredStrategy()
+    atexit.register(strategy._extended._collective_ops._pool.close) # type: ignore
     with strategy.scope():
         model = RetrievalModel(
             unique_user_ids=unique_user_ids,
