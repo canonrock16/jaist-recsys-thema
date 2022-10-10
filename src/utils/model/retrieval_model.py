@@ -11,6 +11,7 @@ from tensorflow_recommenders import metrics as tfrs_metrics
 from tensorflow_recommenders.tasks import base
 import numpy as np
 
+
 class MyRetrieval(tfrs.tasks.Retrieval):
     def call(
         self,
@@ -21,7 +22,7 @@ class MyRetrieval(tfrs.tasks.Retrieval):
         candidate_ids: Optional[tf.Tensor] = None,
         compute_metrics: bool = True,
         compute_batch_metrics: bool = True,
-        item_weights = None,
+        item_weights=None,
     ) -> tf.Tensor:
 
         scores = tf.linalg.matmul(query_embeddings, candidate_embeddings, transpose_b=True)
@@ -47,26 +48,25 @@ class MyRetrieval(tfrs.tasks.Retrieval):
 
         if False:
             # scoreを適当にいじる
-            item_weight = tf.random.uniform(shape=[num_queries,num_candidates],minval=2,maxval=4)
-            fixed_scores = scores*item_weight
+            item_weight = tf.random.uniform(shape=[num_queries, num_candidates], minval=2, maxval=4)
+            fixed_scores = scores * item_weight
 
             # 対角成分だけオリジナルのスコアで、残りは0の行列
-            diag_scores = labels*scores
+            diag_scores = labels * scores
             # tf.print('diag_scores',diag_scores)
             # 改変後スコアの対角成分を0に直し、オリジナルスコアに置き換える
-            fixed_scores = tf.linalg.set_diag(fixed_scores,tf.zeros(num_queries))
+            fixed_scores = tf.linalg.set_diag(fixed_scores, tf.zeros(num_queries))
             # tf.print('fixed_scores',fixed_scores)
             fixed_scores = fixed_scores + diag_scores
             scores = fixed_scores
             # tf.print('scores',scores)
-            
+
         if item_weights is not None:
             # tf.print('scores1',scores)
             # tf.print('item_weights',item_weights)
             scores = scores * item_weights
             # tf.print('scores2',scores)
-            
-        
+
         loss = self._loss(y_true=labels, y_pred=scores, sample_weight=sample_weight)
 
         update_ops = []
@@ -85,13 +85,13 @@ class MyRetrieval(tfrs.tasks.Retrieval):
 
         with tf.control_dependencies(update_ops):
             return tf.identity(loss)
-    
+
 
 class RetrievalModel(tfrs.Model):
     # def __init__(self, unique_item_ids, unique_user_ids, user_dict_key, item_dict_key, embedding_dimension,metrics_candidate_dataset,user_id2seen_items):
     # def __init__(self, unique_item_ids, unique_user_ids, user_dict_key, item_dict_key, embedding_dimension,metrics_candidate_dataset,loss,num_hard_negatives):
-    def __init__(self, unique_item_ids, unique_user_ids, user_dict_key, item_dict_key, embedding_dimension,metrics_candidate_dataset,loss):
-        
+    def __init__(self, unique_item_ids, unique_user_ids, user_dict_key, item_dict_key, embedding_dimension, metrics_candidate_dataset, loss):
+
         super().__init__()
         self.user_model = tf.keras.Sequential(
             [
@@ -105,12 +105,14 @@ class RetrievalModel(tfrs.Model):
                 tf.keras.layers.Embedding(len(unique_item_ids), embedding_dimension),
             ]
         )
-        # self.task=tfrs.tasks.Retrieval(
-        self.task=MyRetrieval(
+        self.task = MyRetrieval(
             loss=loss,
             # num_hard_negatives=num_hard_negatives,
             metrics=tfrs.metrics.FactorizedTopK(candidates=metrics_candidate_dataset.batch(128).map(self.item_model)),
         )
+        # self.task = tfrs.tasks.Retrieval(metrics=None)
+        # self.task = tfrs.tasks.Retrieval(metrics=tfrs.metrics.FactorizedTopK(candidates=metrics_candidate_dataset.batch(128).map(self.item_model)))
+
         self.user_dict_key = user_dict_key
         self.item_dict_key = item_dict_key
         # self.user_id2seen_items = user_id2seen_items
@@ -120,10 +122,9 @@ class RetrievalModel(tfrs.Model):
         item_id_list = features[self.item_dict_key]
         user_embeddings = self.user_model(user_id_list)
         item_embeddings = self.item_model(item_id_list)
-        
-        if 'item_weights' in features.keys():
-            item_weights = features['item_weights']
-            return self.task(user_embeddings, item_embeddings, item_weights = item_weights,compute_metrics=not training)
-        
-        return self.task(user_embeddings, item_embeddings,compute_metrics=not training)
-        
+
+        if "item_weights" in features.keys():
+            item_weights = features["item_weights"]
+            return self.task(user_embeddings, item_embeddings, item_weights=item_weights, compute_metrics=not training)
+
+        return self.task(user_embeddings, item_embeddings, compute_metrics=not training)
