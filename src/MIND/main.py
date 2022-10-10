@@ -3,17 +3,24 @@ import pandas as pd
 import tensorflow as tf
 import datetime
 import atexit
-from tqdm import tqdm
+import tensorflow_recommenders as tfrs
 
+from tqdm import tqdm
 from src.utils.model.retrieval_model import RetrievalModel
 
-batch_size = 200
-embedding_dimension = 512
+batch_size = 40000
+embedding_dimension = 1024
 learning_rate = 0.1
 early_stopping_flg = True
 tensorboard_flg = False
 log_path = "./logs/MIND/"
-max_epoch_num = 1
+max_epoch_num = 20
+
+print('batch_size',batch_size)
+print('embedding_dimension',embedding_dimension)
+print('learning_rate',learning_rate)
+print('early_stopping_flg',early_stopping_flg)
+print('max_epoch_num',max_epoch_num)
 
 
 def make_click_df(behaviors_df):
@@ -47,10 +54,15 @@ def make_click_df(behaviors_df):
 
 def main():
     train_behaviors_df = pd.read_table(
-        "data/MIND/MINDsmall_train/behaviors.tsv", names=("Impression_ID", "User_ID", "Time", "History", "Impressions")
+       "data/MIND/large_train/behaviors.tsv", names=("Impression_ID", "User_ID", "Time", "History", "Impressions")
     )
-    val_behaviors_df = pd.read_table("data/MIND/MINDsmall_dev/behaviors.tsv", names=("Impression_ID", "User_ID", "Time", "History", "Impressions"))
-    test_behaviors_df = pd.read_table("data/MIND/MINDsmall_dev/behaviors.tsv", names=("Impression_ID", "User_ID", "Time", "History", "Impressions"))
+    # train_behaviors_df = pd.read_table(
+    #     "data/MIND/small_train/behaviors.tsv", names=("Impression_ID", "User_ID", "Time", "History", "Impressions")
+    # )
+    val_behaviors_df = pd.read_table("data/MIND/large_val/behaviors.tsv", names=("Impression_ID", "User_ID", "Time", "History", "Impressions"))
+    # val_behaviors_df = pd.read_table("data/MIND/small_val/behaviors.tsv", names=("Impression_ID", "User_ID", "Time", "History", "Impressions"))
+    test_behaviors_df = pd.read_table("data/MIND/large_test/behaviors.tsv", names=("Impression_ID", "User_ID", "Time", "History", "Impressions"))
+    # test_behaviors_df = pd.read_table("data/MIND/small_val/behaviors.tsv", names=("Impression_ID", "User_ID", "Time", "History", "Impressions"))
     print("unique user number of train", len(train_behaviors_df["User_ID"].unique()))
     print("unique user number of val", len(val_behaviors_df["User_ID"].unique()))
     print("unique user number of test", len(test_behaviors_df["User_ID"].unique()))
@@ -89,13 +101,13 @@ def main():
             embedding_dimension=embedding_dimension,
             metrics_candidate_dataset=unique_item_dataset,
         )
-        model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate))
+        model.compile(optimizer=tf.keras.optimizers.Adamax(learning_rate))
 
     callbacks = []
     if early_stopping_flg:
         callbacks.append(
             tf.keras.callbacks.EarlyStopping(
-                monitor="total_loss",
+                monitor="val_total_loss",
                 min_delta=0,
                 patience=3,
                 verbose=0,
@@ -114,6 +126,10 @@ def main():
         )
 
     model.fit(x=train, validation_data=val, epochs=max_epoch_num, callbacks=callbacks)
+
+    model.task.factorized_metrics = tfrs.metrics.FactorizedTopK(
+          candidates=tfrs.layers.factorized_top_k.BruteForce().index_from_dataset(unique_item_dataset.batch(8192).map(model.item_model)))
+    model.compile()
     model.evaluate(test, return_dict=True)
 
 

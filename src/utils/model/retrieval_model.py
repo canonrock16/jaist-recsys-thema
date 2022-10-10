@@ -19,8 +19,8 @@ class RetrievalModel(tfrs.Model):
                 tf.keras.layers.Embedding(len(unique_item_ids), embedding_dimension),
             ]
         )
-        # self.task = tfrs.tasks.Retrieval(metrics=None)
-        self.task = tfrs.tasks.Retrieval(metrics=tfrs.metrics.FactorizedTopK(candidates=metrics_candidate_dataset.batch(128).map(self.item_model)))
+        self.task = tfrs.tasks.Retrieval(metrics=None)
+        # self.task = tfrs.tasks.Retrieval(metrics=tfrs.metrics.FactorizedTopK(candidates=metrics_candidate_dataset.batch(128).map(self.item_model)))
         self.user_dict_key = user_dict_key
         self.item_dict_key = item_dict_key
 

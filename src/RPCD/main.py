@@ -3,35 +3,44 @@ import pandas as pd
 import tensorflow as tf
 import datetime
 import atexit
-from sklearn.model_selection import train_test_split
+import tensorflow_recommenders as tfrs
 
+from sklearn.model_selection import train_test_split
 from src.utils.model.retrieval_model import RetrievalModel
 
 val_rate = 0.2
 test_rate = 0.1
 batch_size = 200
-embedding_dimension = 512
+embedding_dimension = 1024
 learning_rate = 0.1
 early_stopping_flg = True
 tensorboard_flg = False
 log_path = "./logs/MIND/"
 max_epoch_num = 20
 
+print("val_rate", val_rate)
+print("test_rate", test_rate)
+print("batch_size", batch_size)
+print("embedding_dimension", embedding_dimension)
+print("learning_rate", learning_rate)
+print("early_stopping_flg", early_stopping_flg)
+print("max_epoch_num", max_epoch_num)
+
 
 def main():
-    behaviors_df = pd.read_csv("data/RentalProperties/user_activity.csv", names=("item_id", "user_id", "event_type", "create_timestamp"))
+    behaviors_df = pd.read_csv("data/RPCD/user_activity.csv", names=("item_id", "user_id", "event_type", "create_timestamp"))
 
     seen_df = behaviors_df.query('event_type == "seen"')
     count_df = pd.DataFrame(seen_df["user_id"].value_counts()).reset_index().rename(columns={"index": "user_id", "user_id": "count"})
     unique_user_ids = list(count_df.query("count >= 10")["user_id"])
     seen_df = seen_df[seen_df["user_id"].isin(unique_user_ids)]
 
-    train_val_df, test_df = train_test_split(seen_df, test_size=test_rate, stratify=seen_df["user_id"])
-    train_df, val_df = train_test_split(train_val_df, test_size=val_rate, stratify=train_val_df["user_id"])
+    train_val_df, test_df = train_test_split(seen_df, test_size=test_rate, stratify=seen_df["user_id"], random_state=1)
+    train_df, val_df = train_test_split(train_val_df, test_size=val_rate, stratify=train_val_df["user_id"], random_state=1)
 
-    print(len(train_df["user_id"].unique()))
-    print(len(val_df["user_id"].unique()))
-    print(len(test_df["user_id"].unique()))
+    print("train_df unique user_id num", len(train_df["user_id"].unique()))
+    print("val_df unique user_id num", len(val_df["user_id"].unique()))
+    print("test_df unique user_id num", len(test_df["user_id"].unique()))
 
     train_ratings = tf.data.Dataset.from_tensor_slices({"user_id": train_df["user_id"], "item_id": train_df["item_id"]})
     val_ratings = tf.data.Dataset.from_tensor_slices({"user_id": val_df["user_id"], "item_id": val_df["item_id"]})
@@ -46,7 +55,7 @@ def main():
     unique_item_dataset = tf.data.Dataset.from_tensor_slices(unique_item_ids)
 
     strategy = tf.distribute.MirroredStrategy()
-    atexit.register(strategy._extended._collective_ops._pool.close) # type: ignore
+    atexit.register(strategy._extended._collective_ops._pool.close)  # type: ignore
     with strategy.scope():
         model = RetrievalModel(
             unique_user_ids=unique_user_ids,
@@ -56,13 +65,13 @@ def main():
             embedding_dimension=embedding_dimension,
             metrics_candidate_dataset=unique_item_dataset,
         )
-        model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate))
+        model.compile(optimizer=tf.keras.optimizers.Adamax(learning_rate))
 
     callbacks = []
     if early_stopping_flg:
         callbacks.append(
             tf.keras.callbacks.EarlyStopping(
-                monitor="total_loss",
+                monitor="val_total_loss",
                 min_delta=0,
                 patience=3,
                 verbose=0,
@@ -81,6 +90,11 @@ def main():
         )
 
     model.fit(x=train, validation_data=val, epochs=max_epoch_num, callbacks=callbacks)
+
+    model.task.factorized_metrics = tfrs.metrics.FactorizedTopK(
+        candidates=tfrs.layers.factorized_top_k.BruteForce().index_from_dataset(unique_item_dataset.batch(8192).map(model.item_model))
+    )
+    model.compile()
     model.evaluate(test, return_dict=True)
 
 

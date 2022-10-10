@@ -28,6 +28,7 @@ tensorflow-recommenders = "^0.7.0"
 tensorflow-datasets = "^4.6.0"
 pandas = "^1.4.4"
 scikit-learn = "^1.1.2"
+numpy = "^1.23.3"
 
 [tool.poetry.dev-dependencies]
 
