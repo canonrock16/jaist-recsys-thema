@@ -1,15 +1,12 @@
-from typing import Dict, Text
+from typing import Dict, List, Optional, Text
 
+import numpy as np
 import tensorflow as tf
+import tensorflow_ranking as tfr
 import tensorflow_recommenders as tfrs
-from typing import Optional, Text, List
-
-import tensorflow as tf
-
 from tensorflow_recommenders import layers
 from tensorflow_recommenders import metrics as tfrs_metrics
 from tensorflow_recommenders.tasks import base
-import numpy as np
 
 
 class MyRetrieval(tfrs.tasks.Retrieval):
@@ -76,7 +73,9 @@ class MyRetrieval(tfrs.tasks.Retrieval):
         if self._factorized_metrics is not None and compute_metrics:
             update_ops.append(
                 self._factorized_metrics.update_state(
-                    query_embeddings, candidate_embeddings[: tf.shape(query_embeddings)[0]], true_candidate_ids=candidate_ids
+                    # 
+                    # query_embeddings, candidate_embeddings[: tf.shape(query_embeddings)[0]], true_candidate_ids=candidate_ids
+                    labels,scores
                 )
             )
         if compute_batch_metrics:
@@ -88,9 +87,9 @@ class MyRetrieval(tfrs.tasks.Retrieval):
 
 
 class RetrievalModel(tfrs.Model):
-    # def __init__(self, unique_item_ids, unique_user_ids, user_dict_key, item_dict_key, embedding_dimension,metrics_candidate_dataset,user_id2seen_items):
-    # def __init__(self, unique_item_ids, unique_user_ids, user_dict_key, item_dict_key, embedding_dimension,metrics_candidate_dataset,loss,num_hard_negatives):
-    def __init__(self, unique_item_ids, unique_user_ids, user_dict_key, item_dict_key, embedding_dimension, metrics_candidate_dataset, loss):
+    def __init__(
+        self, unique_item_ids, unique_user_ids, user_dict_key, item_dict_key, embedding_dimension, metrics_candidate_dataset, loss
+    ):
 
         super().__init__()
         self.user_model = tf.keras.Sequential(
@@ -107,24 +106,34 @@ class RetrievalModel(tfrs.Model):
         )
         self.task = MyRetrieval(
             loss=loss,
+            remove_accidental_hits=True,
             # num_hard_negatives=num_hard_negatives,
-            metrics=tfrs.metrics.FactorizedTopK(candidates=metrics_candidate_dataset.batch(128).map(self.item_model)),
+            metrics=
+                tfr.keras.metrics.MRRMetric(),
+                # tfrs.metrics.FactorizedTopK(candidates=metrics_candidate_dataset.batch(2000).map(self.item_model)),
+            batch_metrics=[
+                tf.keras.metrics.AUC(
+                    num_thresholds=200, curve="ROC", summation_method="interpolation", name="auc_metric", from_logits=True
+                )
+            ],
         )
         # self.task = tfrs.tasks.Retrieval(metrics=None)
         # self.task = tfrs.tasks.Retrieval(metrics=tfrs.metrics.FactorizedTopK(candidates=metrics_candidate_dataset.batch(128).map(self.item_model)))
-
+        # self.task = tfrs.tasks.Retrieval(metrics=tfr.keras.metrics.MRRMetric())
         self.user_dict_key = user_dict_key
         self.item_dict_key = item_dict_key
-        # self.user_id2seen_items = user_id2seen_items
 
     def compute_loss(self, features: Dict[Text, tf.Tensor], training=False) -> tf.Tensor:
         user_id_list = features[self.user_dict_key]
         item_id_list = features[self.item_dict_key]
         user_embeddings = self.user_model(user_id_list)
         item_embeddings = self.item_model(item_id_list)
+        
+        candidate_ids = tf.cast(self.item_model.layers[0](item_id_list),tf.int32)
 
         if "item_weights" in features.keys():
             item_weights = features["item_weights"]
             return self.task(user_embeddings, item_embeddings, item_weights=item_weights, compute_metrics=not training)
 
-        return self.task(user_embeddings, item_embeddings, compute_metrics=not training)
+        return self.task(user_embeddings, item_embeddings, compute_metrics=not training,candidate_ids=candidate_ids)
+        # return self.task(user_embeddings, item_embeddings, compute_metrics=not training)
