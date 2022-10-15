@@ -73,9 +73,9 @@ class MyRetrieval(tfrs.tasks.Retrieval):
         if self._factorized_metrics is not None and compute_metrics:
             update_ops.append(
                 self._factorized_metrics.update_state(
-                    # 
+                    #
                     # query_embeddings, candidate_embeddings[: tf.shape(query_embeddings)[0]], true_candidate_ids=candidate_ids
-                    labels,scores
+                    labels, scores,
                 )
             )
         if compute_batch_metrics:
@@ -87,9 +87,7 @@ class MyRetrieval(tfrs.tasks.Retrieval):
 
 
 class RetrievalModel(tfrs.Model):
-    def __init__(
-        self, unique_item_ids, unique_user_ids, user_dict_key, item_dict_key, embedding_dimension, metrics_candidate_dataset, loss
-    ):
+    def __init__(self, unique_item_ids, unique_user_ids, user_dict_key, item_dict_key, embedding_dimension, metrics_candidate_dataset, loss):
 
         super().__init__()
         self.user_model = tf.keras.Sequential(
@@ -108,13 +106,10 @@ class RetrievalModel(tfrs.Model):
             loss=loss,
             remove_accidental_hits=True,
             # num_hard_negatives=num_hard_negatives,
-            metrics=
-                tfr.keras.metrics.MRRMetric(),
-                # tfrs.metrics.FactorizedTopK(candidates=metrics_candidate_dataset.batch(2000).map(self.item_model)),
+            metrics=tfr.keras.metrics.MRRMetric(),
+            # tfrs.metrics.FactorizedTopK(candidates=metrics_candidate_dataset.batch(2000).map(self.item_model)),
             batch_metrics=[
-                tf.keras.metrics.AUC(
-                    num_thresholds=200, curve="ROC", summation_method="interpolation", name="auc_metric", from_logits=True
-                )
+                tf.keras.metrics.AUC(num_thresholds=200, curve="ROC", summation_method="interpolation", name="auc_metric", from_logits=True)
             ],
         )
         # self.task = tfrs.tasks.Retrieval(metrics=None)
@@ -128,12 +123,12 @@ class RetrievalModel(tfrs.Model):
         item_id_list = features[self.item_dict_key]
         user_embeddings = self.user_model(user_id_list)
         item_embeddings = self.item_model(item_id_list)
-        
-        candidate_ids = tf.cast(self.item_model.layers[0](item_id_list),tf.int32)
+
+        candidate_ids = tf.cast(self.item_model.layers[0](item_id_list), tf.int32)
 
         if "item_weights" in features.keys():
             item_weights = features["item_weights"]
             return self.task(user_embeddings, item_embeddings, item_weights=item_weights, compute_metrics=not training)
 
-        return self.task(user_embeddings, item_embeddings, compute_metrics=not training,candidate_ids=candidate_ids)
+        return self.task(user_embeddings, item_embeddings, compute_metrics=not training, candidate_ids=candidate_ids)
         # return self.task(user_embeddings, item_embeddings, compute_metrics=not training)
