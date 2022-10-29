@@ -11,13 +11,16 @@ from tqdm import tqdm
 
 val_rate = 0.2
 test_rate = 0.1
-batch_size = 200
-embedding_dimension = 1024
+batch_size = 100
+embedding_dimension = 50
 learning_rate = 0.1
 early_stopping_flg = True
-tensorboard_flg = False
-log_path = "./logs/MIND/"
+tensorboard_flg = True
+log_path = "./tfb/PRCD/"
 max_epoch_num = 20
+negative_weight = 10
+negative_weight_mode = True
+num_hard_negatives = 30
 
 print("val_rate", val_rate)
 print("test_rate", test_rate)
@@ -26,7 +29,9 @@ print("embedding_dimension", embedding_dimension)
 print("learning_rate", learning_rate)
 print("early_stopping_flg", early_stopping_flg)
 print("max_epoch_num", max_epoch_num)
-
+print('negative_weight_mode',negative_weight_mode)
+print('negative_weight',negative_weight)
+print('num_hard_negatives',num_hard_negatives)
 
 def main():
     behaviors_df = pd.read_csv("data/RPCD/user_activity.csv", names=("item_id", "user_id", "event_type", "create_timestamp"))
@@ -35,14 +40,7 @@ def main():
     count_df = pd.DataFrame(seen_df["user_id"].value_counts()).reset_index().rename(columns={"index": "user_id", "user_id": "count"})
     unique_user_ids = list(count_df.query("count >= 10")["user_id"])
     seen_df = seen_df[seen_df["user_id"].isin(unique_user_ids)]
-    seen_in_list_df = (
-        behaviors_df.query('event_type == "seen_in_list"')
-        .groupby(["user_id", "item_id"])
-        .size()
-        .sort_values(ascending=False)
-        .reset_index(name="count")
-    )
-
+    
     train_val_df, test_df = train_test_split(seen_df, test_size=test_rate, stratify=seen_df["user_id"], random_state=1)
     train_df, val_df = train_test_split(train_val_df, test_size=val_rate, stratify=train_val_df["user_id"], random_state=1)
 
@@ -66,14 +64,26 @@ def main():
     unique_item_ids = np.array(list(set(train_df["item_id"].unique()) | set(val_df["item_id"].unique()) | set(test_df["item_id"].unique())))
     unique_item_dataset = tf.data.Dataset.from_tensor_slices(unique_item_ids)
 
-    if True:
+    if negative_weight_mode:
+        print('negative weight mode')
+        seen_in_list_df = (
+            behaviors_df.query('event_type == "seen_in_list"')
+            .groupby(["user_id", "item_id"])
+            .size()
+            .sort_values(ascending=False)
+            .reset_index(name="count")
+        )
+                
         user_id2seen_items = {}
-        seen_user_ids = list(seen_in_list_df["user_id"].unique())
-        for seen_user_id in tqdm(seen_user_ids):
-            user_id2seen_items[seen_user_id] = []
-            seen_items = seen_in_list_df.query(f'user_id == "{seen_user_id}"')
-            for i, item in seen_items.iterrows():
-                user_id2seen_items[seen_user_id].append({"item_id": item["item_id"], "count": item["count"]})
+        for index, data in tqdm(seen_in_list_df.iterrows(), total=len(seen_in_list_df)):
+            user_id = data["user_id"]
+            item_id = data["item_id"]
+            count = data["count"]
+
+            if user_id not in user_id2seen_items:
+                user_id2seen_items[user_id] = [{"item_id": item_id, "count": count}]
+            else:
+                user_id2seen_items[user_id].append({"item_id": item_id, "count": count})
 
         item_weights = []
         for batch in tqdm(train):
@@ -94,8 +104,7 @@ def main():
                         for j, item_id in enumerate(item_ids):
                             decoded_item_id = item_id.decode("utf-8")
                             if seen_item["item_id"] == decoded_item_id and i != j:
-                                weights[j] = seen_item["count"] + 1
-                                # weights[j] = seen_item["count"]+10
+                                weights[j] = seen_item["count"] + negative_weight
                 item_weights_by_batch.append(weights)
             item_weights.append(item_weights_by_batch)
 
@@ -111,6 +120,7 @@ def main():
         train = train_ratings.batch(batch_size)
 
         # 各種チェック
+        print('start check')
         indexes = np.where(item_weights == 2)
         # item_weightが2になっているインデックスに相当するユーザーとアイテムが、本当にseen_in_list_dfにあるかどうか検査
         for i, j, k in zip(indexes[0], indexes[1], indexes[2]):
@@ -146,6 +156,7 @@ def main():
             item_dict_key="item_id",
             embedding_dimension=embedding_dimension,
             metrics_candidate_dataset=unique_item_dataset,
+            num_hard_negatives=num_hard_negatives,
             loss=tf.keras.losses.CategoricalCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.SUM),
         )
         model.compile(optimizer=tf.keras.optimizers.Adamax(learning_rate))
@@ -155,29 +166,33 @@ def main():
         callbacks.append(
             tf.keras.callbacks.EarlyStopping(
                 monitor="val_total_loss",
+                # monitor="val_mrr_metric",
                 min_delta=0,
                 patience=3,
                 verbose=0,
                 mode="auto",
+                # mode="max",
                 baseline=None,
                 restore_best_weights=False,
             )
         )
     if tensorboard_flg:
-        tfb_log_path = log_path + datetime.now().strftime("%Y%m%d-%H%M%S")
+        tfb_log_path = log_path + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
         callbacks.append(
             tf.keras.callbacks.TensorBoard(
                 log_dir=tfb_log_path,
                 histogram_freq=1,
             )
         )
-
+    
+    print('start training')
     model.fit(x=train, validation_data=val, epochs=max_epoch_num, callbacks=callbacks)
 
-    model.task.factorized_metrics = tfrs.metrics.FactorizedTopK(
-        candidates=tfrs.layers.factorized_top_k.BruteForce().index_from_dataset(unique_item_dataset.batch(8192).map(model.item_model))
-    )
-    model.compile()
+    # model.task.factorized_metrics = tfrs.metrics.FactorizedTopK(
+        # candidates=tfrs.layers.factorized_top_k.BruteForce().index_from_dataset(unique_item_dataset.batch(8192).map(model.item_model))
+    # )
+    # model.compile()
+    print('start evaluate')
     model.evaluate(test, return_dict=True)
 
 

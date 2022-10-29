@@ -2,7 +2,7 @@
 #PBS -q GPU-1A
 #PBS -l select=1:ngpus=1
 #PBS -j oe
-#PBS -N MIND_large_normal
+#PBS -N MIND_large_negative_weight_gpu
 #PBS -M s2030415@jaist.ac.jp -m be
 
 source /etc/profile.d/modules.csh

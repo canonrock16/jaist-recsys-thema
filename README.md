@@ -25,3 +25,6 @@ poetry run python -m src.MIND.main
 ```
 
 qsub MIND_PBS.sh
+
+#PBS -q GPU-1A
+#PBS -l select=1:ngpus=1

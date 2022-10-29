@@ -29,6 +29,26 @@ class MyRetrieval(tfrs.tasks.Retrieval):
 
         labels = tf.eye(num_queries, num_candidates)
 
+        update_ops = []
+        if self._factorized_metrics is not None and compute_metrics:
+            update_ops.append(
+                self._factorized_metrics.update_state(
+                    #
+                    # query_embeddings, candidate_embeddings[: tf.shape(query_embeddings)[0]], true_candidate_ids=candidate_ids
+                    labels, scores,
+                )
+            )
+        if compute_batch_metrics:
+            for metric in self._batch_metrics:
+                update_ops.append(metric.update_state(labels, scores))
+
+
+        if item_weights is not None:
+            # tf.print('scores1',scores)
+            # tf.print('item_weights',item_weights)
+            scores = scores * item_weights
+            # tf.print('scores2',scores)
+
         if self._temperature is not None:
             scores = scores / self._temperature
 
@@ -40,6 +60,7 @@ class MyRetrieval(tfrs.tasks.Retrieval):
                 raise ValueError("When accidental hit removal is enabled, candidate ids " "must be supplied.")
                 scores = layers.loss.RemoveAccidentalHits()(labels, scores, candidate_ids)
 
+        
         if self._num_hard_negatives is not None:
             scores, labels = layers.loss.HardNegativeMining(self._num_hard_negatives)(scores, labels)
 
@@ -58,36 +79,19 @@ class MyRetrieval(tfrs.tasks.Retrieval):
             scores = fixed_scores
             # tf.print('scores',scores)
 
-        if item_weights is not None:
-            # tf.print('scores1',scores)
-            # tf.print('item_weights',item_weights)
-            scores = scores * item_weights
-            # tf.print('scores2',scores)
-
+        
         loss = self._loss(y_true=labels, y_pred=scores, sample_weight=sample_weight)
 
-        update_ops = []
         for metric in self._loss_metrics:
             update_ops.append(metric.update_state(loss, sample_weight=sample_weight))
 
-        if self._factorized_metrics is not None and compute_metrics:
-            update_ops.append(
-                self._factorized_metrics.update_state(
-                    #
-                    # query_embeddings, candidate_embeddings[: tf.shape(query_embeddings)[0]], true_candidate_ids=candidate_ids
-                    labels, scores,
-                )
-            )
-        if compute_batch_metrics:
-            for metric in self._batch_metrics:
-                update_ops.append(metric.update_state(labels, scores))
-
+        
         with tf.control_dependencies(update_ops):
             return tf.identity(loss)
 
 
 class RetrievalModel(tfrs.Model):
-    def __init__(self, unique_item_ids, unique_user_ids, user_dict_key, item_dict_key, embedding_dimension, metrics_candidate_dataset, loss):
+    def __init__(self, unique_item_ids, unique_user_ids, user_dict_key, item_dict_key, embedding_dimension, metrics_candidate_dataset, loss,num_hard_negatives):
 
         super().__init__()
         self.user_model = tf.keras.Sequential(
@@ -105,11 +109,11 @@ class RetrievalModel(tfrs.Model):
         self.task = MyRetrieval(
             loss=loss,
             remove_accidental_hits=True,
-            # num_hard_negatives=num_hard_negatives,
+            num_hard_negatives=num_hard_negatives,
             metrics=tfr.keras.metrics.MRRMetric(),
-            # tfrs.metrics.FactorizedTopK(candidates=metrics_candidate_dataset.batch(2000).map(self.item_model)),
+            # metrics=tfrs.metrics.FactorizedTopK(candidates=metrics_candidate_dataset.batch(2000).map(self.item_model)),
             batch_metrics=[
-                tf.keras.metrics.AUC(num_thresholds=200, curve="ROC", summation_method="interpolation", name="auc_metric", from_logits=True)
+                tf.keras.metrics.AUC(num_thresholds=200, curve="PR", summation_method="interpolation", name="auc_metric", from_logits=True)
             ],
         )
         # self.task = tfrs.tasks.Retrieval(metrics=None)
@@ -119,6 +123,7 @@ class RetrievalModel(tfrs.Model):
         self.item_dict_key = item_dict_key
 
     def compute_loss(self, features: Dict[Text, tf.Tensor], training=False) -> tf.Tensor:
+    # def compute_loss(self, features: Dict[Text, tf.Tensor]) -> tf.Tensor:
         user_id_list = features[self.user_dict_key]
         item_id_list = features[self.item_dict_key]
         user_embeddings = self.user_model(user_id_list)
@@ -128,7 +133,8 @@ class RetrievalModel(tfrs.Model):
 
         if "item_weights" in features.keys():
             item_weights = features["item_weights"]
-            return self.task(user_embeddings, item_embeddings, item_weights=item_weights, compute_metrics=not training)
+            return self.task(user_embeddings, item_embeddings, candidate_ids=candidate_ids, item_weights=item_weights)
+            # return self.task(user_embeddings, item_embeddings, candidate_ids=candidate_ids, item_weights=item_weights, compute_metrics=not training)
 
-        return self.task(user_embeddings, item_embeddings, compute_metrics=not training, candidate_ids=candidate_ids)
-        # return self.task(user_embeddings, item_embeddings, compute_metrics=not training)
+        return self.task(user_embeddings, item_embeddings, candidate_ids=candidate_ids)
+        # return self.task(user_embeddings, item_embeddings, candidate_ids=candidate_ids, compute_metrics=not training)
